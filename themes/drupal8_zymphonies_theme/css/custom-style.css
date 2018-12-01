@@ -258,9 +258,7 @@ input, button, select, textarea{
   border: 1px solid #C7C7C7;
 }
 
-.contact-message-form label{
-  display: block;
-}
+
 
 .btn,
 input[type="submit"]{
