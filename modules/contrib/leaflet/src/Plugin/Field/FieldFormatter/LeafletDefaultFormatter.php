@@ -13,6 +13,7 @@ use Drupal\leaflet\LeafletSettingsElementsTrait;
 use Drupal\Core\Utility\Token;
 use Drupal\core\Render\Renderer;
 use Drupal\Core\Extension\ModuleHandlerInterface;
+use Drupal\Component\Utility\Html;
 use Drupal\Core\Url;
 use Drupal\Core\Utility\LinkGeneratorInterface;
 
@@ -159,9 +160,10 @@ class LeafletDefaultFormatter extends FormatterBase implements ContainerFactoryP
       ],
       'icon' => [
         'iconUrl' => '',
-        'shadowUrl' => '',
         'iconSize' => ['x' => NULL, 'y' => NULL],
         'iconAnchor' => ['x' => NULL, 'y' => NULL],
+        'shadowUrl' => '',
+        'shadowSize' => ['x' => NULL, 'y' => NULL],
         'shadowAnchor' => ['x' => NULL, 'y' => NULL],
         'popupAnchor' => ['x' => NULL, 'y' => NULL],
       ],
@@ -288,6 +290,12 @@ class LeafletDefaultFormatter extends FormatterBase implements ContainerFactoryP
       $entity = $entity->getTranslation($langcode);
     }
 
+    $entity_type = $entity->getEntityTypeId();
+    $bundle = $entity->bundle();
+    $entity_id = $entity->id();
+    /* @var \Drupal\Core\Field\FieldDefinitionInterface $field */
+    $field = $items->getFieldDefinition();
+
     // Sets/consider possibly existing previous Zoom settings.
     $this->setExistingZoomSettings();
     $settings = $this->getSettings();
@@ -297,6 +305,9 @@ class LeafletDefaultFormatter extends FormatterBase implements ContainerFactoryP
 
     // Always render the map, even if we do not have any data.
     $map = leaflet_map_get_info($settings['leaflet_map']);
+
+    // Add a specific map id.
+    $map['id'] = Html::getUniqueId("leaflet_map_{$entity_type}_{$bundle}_{$entity_id}_{$field->getName()}");
 
     // Set Map additional map Settings.
     $this->setAdditionalMapOptions($map, $settings);
@@ -336,15 +347,25 @@ class LeafletDefaultFormatter extends FormatterBase implements ContainerFactoryP
       $features[] = $feature;
     }
 
+    $js_settings = [
+      'map' => $map,
+      'features' => $features,
+    ];
+
+    // Allow other modules to add/alter the map js settings.
+    $this->moduleHandler->alter('leaflet_default_map_formatter', $js_settings, $items);
+
     $results = [];
     if (!empty($settings['multiple_map'])) {
-      foreach ($features as $feature) {
+      foreach ($js_settings['features'] as $k => $feature) {
+        $map = $js_settings['map'];
+        $map['id'] = $map['id'] . "-{$k}";
         $results[] = $this->leafletService->leafletRenderMap($map, [$feature], $settings['height'] . 'px');
       }
     }
     // Render the map, if we do have data or the hide option is unchecked.
-    elseif (!empty($features) || empty($settings['hide_empty_map'])) {
-      $results[] = $this->leafletService->leafletRenderMap($map, $features, $settings['height'] . 'px');
+    elseif (!empty($js_settings['features']) || empty($settings['hide_empty_map'])) {
+      $results[] = $this->leafletService->leafletRenderMap($js_settings['map'], $js_settings['features'], $settings['height'] . 'px');
     }
 
     return $results;

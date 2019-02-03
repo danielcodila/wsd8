@@ -1,7 +1,22 @@
-(function ($) {
+(function ($, Drupal, drupalSettings) {
 
   Drupal.behaviors.leaflet = {
     attach: function (context, settings) {
+
+      // Attach leaflet ajax popup listeners.
+      $(document).on('leaflet.map', function (e, settings, lMap) {
+        lMap.on('popupopen', function (e) {
+          var content = $('[data-leaflet-ajax-popup]', e.popup._contentNode);
+          if (content.length) {
+            var url = content.data('leaflet-ajax-popup');
+            $.get(url, function (response) {
+              if (response) {
+                e.popup.setContent(response)
+              }
+            });
+          }
+        });
+      });
 
       $.each(settings.leaflet, function (m, data) {
         $('#' + data.mapId, context).each(function () {
@@ -84,11 +99,8 @@
     // Only add a layer switcher if it is enabled in settings, and we have
     // at least two base layers or at least one overlay.
     if (this.layer_control == null && this.settings.layerControl && (count_layers(this.base_layers) > 1 || count_layers(this.overlays) > 0)) {
-      // Only add base-layers if we have more than one, i.e. if there actually
-      // is a choice for the user.
-      var _layers = this.base_layers.length > 1 ? this.base_layers : [];
       // Instantiate layer control, using settings.layerControl as settings.
-      this.layer_control = new L.Control.Layers(_layers, this.overlays, this.settings.layerControl);
+      this.layer_control = new L.Control.Layers(this.base_layers, this.overlays, this.settings.layerControl);
       this.lMap.addControl(this.layer_control);
     }
   };
@@ -177,12 +189,18 @@
       case 'polygon':
         lFeature = this.create_polygon(feature);
         break;
-      case 'multipolygon':
+       case 'multipolygon':
+        lFeature = this.create_multipolygon(feature);
+        break;
       case 'multipolyline':
         lFeature = this.create_multipoly(feature);
         break;
       case 'json':
         lFeature = this.create_json(feature.json);
+        break;
+      case 'multipoint':
+      case 'geometrycollection':
+        lFeature = this.create_collection(feature);
         break;
       default:
         return; // Crash and burn.
@@ -238,19 +256,19 @@
     if (options.iconSize) {
       icon.options.iconSize = new L.Point(parseInt(options.iconSize.x), parseInt(options.iconSize.y));
     }
-    if (options.iconAnchor) {
+    if (options.iconAnchor && options.iconAnchor.x && options.iconAnchor.y) {
       icon.options.iconAnchor = new L.Point(parseFloat(options.iconAnchor.x), parseFloat(options.iconAnchor.y));
     }
-    if (options.popupAnchor) {
-      icon.options.popupAnchor = new L.Point(parseFloat(options.popupAnchor.x), parseFloat(options.popupAnchor.y));
+    if (options.popupAnchor && options.popupAnchor.x && options.popupAnchor.y) {
+      icon.options.popupAnchor = new L.Point(parseInt(options.popupAnchor.x), parseInt(options.popupAnchor.y));
     }
-    if (options.shadowUrl !== undefined) {
+    if (options.shadowUrl) {
       icon.options.shadowUrl = options.shadowUrl;
     }
-    if (options.shadowSize) {
+    if (options.shadowSize && options.shadowSize.x && options.shadowSize.y) {
       icon.options.shadowSize = new L.Point(parseInt(options.shadowSize.x), parseInt(options.shadowSize.y));
     }
-    if (options.shadowAnchor) {
+    if (options.shadowAnchor && options.shadowAnchor.x && options.shadowAnchor.y) {
       icon.options.shadowAnchor = new L.Point(parseInt(options.shadowAnchor.x), parseInt(options.shadowAnchor.y));
     }
     if (options.className) {
@@ -261,6 +279,7 @@
   };
 
   Drupal.Leaflet.prototype.create_point = function (marker) {
+    var self = this;
     var latLng = new L.LatLng(marker.lat, marker.lon);
     this.bounds.push(latLng);
     var lMarker;
@@ -273,13 +292,35 @@
       options.alt = marker.alt;
     }
 
+    function checkImage(imageSrc, setIcon, logError) {
+      var img = new Image();
+      img.src = imageSrc;
+      img.onload = setIcon;
+      img.onerror = logError;
+    }
+
+    lMarker = new L.Marker(latLng, options);
+
     if (marker.icon) {
-      options.icon = this.create_icon(marker.icon);
-      lMarker = new L.Marker(latLng, options);
+      checkImage(marker.icon.iconUrl,
+        // Success loading image.
+        function(){
+          marker.icon.iconSize.x = marker.icon.iconSize.x || this.naturalWidth;
+          marker.icon.iconSize.y = marker.icon.iconSize.y || this.naturalHeight;
+          if (marker.icon.shadowUrl) {
+            marker.icon.shadowSize = marker.icon.shadowSize || {};
+            marker.icon.shadowSize.x = marker.icon.shadowSize.x || this.naturalWidth;
+            marker.icon.shadowSize.y = marker.icon.shadowSize.y || this.naturalHeight;
+          }
+          options.icon = self.create_icon(marker.icon);
+          lMarker.setIcon(options.icon);
+        },
+        // Error loading image.
+        function(err){
+          console.log("Leaflet: The Icon Image doesn't exist at the requested path: " + marker.icon.iconUrl);
+        });
     }
-    else {
-      lMarker = new L.Marker(latLng, options);
-    }
+
     return lMarker;
   };
 
@@ -293,6 +334,14 @@
     return new L.Polyline(latlngs);
   };
 
+  Drupal.Leaflet.prototype.create_collection = function (collection) {
+    var layers = new L.featureGroup();
+    for (var x = 0; x < collection.component.length; x++) {
+      layers.addLayer(this.create_feature(collection.component[x]));
+    }
+    return layers;
+  };
+
   Drupal.Leaflet.prototype.create_polygon = function (polygon) {
     var latlngs = [];
     for (var i = 0; i < polygon.points.length; i++) {
@@ -301,6 +350,21 @@
       this.bounds.push(latlng);
     }
     return new L.Polygon(latlngs);
+  };
+
+  Drupal.Leaflet.prototype.create_multipolygon = function (multipolygon) {
+    var polygons = [];
+    for (var x = 0; x < multipolygon.component.length; x++) {
+      var latlngs = [];
+      var polygon = multipolygon.component[x];
+      for (var i = 0; i < polygon.points.length; i++) {
+        var latlng = [polygon.points[i].lat, polygon.points[i].lon];
+        latlngs.push(latlng);
+        this.bounds.push(latlng);
+      }
+      polygons.push(latlngs);
+    }
+    return new L.Polygon(polygons);
   };
 
   Drupal.Leaflet.prototype.create_multipoly = function (multipoly) {
@@ -316,10 +380,10 @@
       polygons.push(latlngs);
     }
     if (multipoly.multipolyline) {
-      return new L.MultiPolyline(polygons);
+      return new L.polyline(polygons);
     }
     else {
-      return new L.MultiPolygon(polygons);
+      return new L.polygon(polygons);
     }
   };
 
@@ -362,4 +426,4 @@
     }
   };
 
-})(jQuery);
+})(jQuery, Drupal, drupalSettings);

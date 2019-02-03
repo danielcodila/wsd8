@@ -2,10 +2,6 @@
 
   Drupal.behaviors.geofieldGoogleMap = {
     attach: function (context, settings) {
-      Drupal.geoField = Drupal.geoField || {};
-      Drupal.geoField.maps = Drupal.geoField.maps || {};
-
-
       if (drupalSettings['geofield_google_map']) {
         $(context).find('.geofield-google-map').once('geofield-processed').each(function (index, element) {
           var mapid = $(element).attr('id');
@@ -21,7 +17,7 @@
 
             // Load before the Gmap Library, if needed.
             Drupal.geoFieldMap.loadGoogle(mapid, map_settings.gmap_api_key, function () {
-              Drupal.geoFieldMap.map_initialize(mapid, map_settings, data);
+              Drupal.geoFieldMap.map_initialize(mapid, map_settings, data, context);
             });
           }
         });
@@ -44,15 +40,16 @@
     maps_api_loading: false,
 
     /**
-     * Returns the re-coded google maps api language parameter, from html lang attribute.
+     * Returns the re-coded google maps api language parameter, from html lang
+     * attribute.
      */
     googleMapsLanguage: function (html_language) {
       switch (html_language) {
         case 'zh-hans':
-          html_language = 'zh-CN'
+          html_language = 'zh-CN';
           break;
         case 'zh-hant':
-          html_language = 'zh-TW'
+          html_language = 'zh-TW';
           break;
       }
       return html_language;
@@ -85,7 +82,7 @@
     // Lead Google Maps library.
     loadGoogle: function (mapid, gmap_api_key, callback) {
       var self = this;
-      var html_language = $('html').attr("lang") ? $('html').attr("lang") : 'en'
+      var html_language = $('html').attr("lang") ? $('html').attr("lang") : 'en';
 
       // Add the callback.
       self.addCallback(callback);
@@ -216,7 +213,7 @@
     },
 
     // Init Geofield Google Map and its functions.
-    map_initialize: function (mapid, map_settings, data) {
+    map_initialize: function (mapid, map_settings, data, context) {
       var self = this;
       $.noConflict();
 
@@ -345,7 +342,6 @@
           // Define the icon_image, if set.
           var icon_image = map_settings.map_marker_and_infowindow.icon_image_path.length > 0 ? map_settings.map_marker_and_infowindow.icon_image_path : null;
 
-
           if (features.setMap) {
             self.place_feature(features, icon_image, mapid);
           }
@@ -399,6 +395,21 @@
           }
         });
 
+        // Add an event listener for the Ajax Infowindow Popup.
+        google.maps.event.addListener(map.infowindow, 'domready', function(){
+          var infowindow_content = document.createElement('div');
+          infowindow_content.innerHTML = map.infowindow.getContent().trim();
+          var content = $('[data-geofield-google-map-ajax-popup]', infowindow_content);
+          if (content.length) {
+            var url = content.data('geofield-google-map-ajax-popup');
+            $.get(url, function (response) {
+              if (response) {
+                map.infowindow.setContent(response)
+              }
+            });
+          }
+        });
+
         // At the beginning (once) ...
         google.maps.event.addListenerOnce(map, 'idle', function() {
 
@@ -421,6 +432,9 @@
 
           // Update map initial state after everything is settled.
           self.map_set_start_state(mapid, map.getCenter(), map.getZoom());
+
+          // Trigger a custom event on Geofield Map initialized, with mapid.
+          $(context).trigger('geofieldMapInit', mapid);
         });
 
       }
